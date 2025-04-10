@@ -1,5 +1,6 @@
-import { NextResponse } from "next/server"
-import { getCurrentUser, getUserAccounts } from "@/lib/auth"
+--- a/api/auth/me/route.ts
++++ b/api/auth/me/route.ts
+
 
 export async function GET() {
   try {

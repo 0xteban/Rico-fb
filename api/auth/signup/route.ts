@@ -1,44 +1,58 @@
-import { type NextRequest, NextResponse } from "next/server"
-import { registerUser } from "@/lib/auth"
-import { cookies } from "next/headers"
-import jwt from "jsonwebtoken"
-
-const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key"
-const TOKEN_EXPIRY = "7d"
+import { type NextRequest, NextResponse } from "next/server";
+import { signUp } from "../../../firebase-auth"; // Import Firebase signUp
+import { createUser } from "../../../users"; // Import Firestore createUser
+import { User } from "../../../models"; // Import the User interface
 
 export async function POST(request: NextRequest) {
   try {
-    const { email, password, name } = await request.json()
+    const { email, password, name } = await request.json();
 
     // Validate input
     if (!email || !password || !name) {
-      return NextResponse.json({ error: "Email, password, and name are required" }, { status: 400 })
+      return NextResponse.json({ error: "Email, password, and name are required" }, { status: 400 });
     }
 
-    // Register the user
-    const user = await registerUser(email, password, name)
+    // Sign up with Firebase Authentication
+    const userCredential = await signUp(email, password);
+    const firebaseUser = userCredential.user;
 
-    if (!user) {
-      return NextResponse.json({ error: "Failed to register user" }, { status: 500 })
+    if (!firebaseUser) {
+      return NextResponse.json({ error: "Failed to register user with Firebase" }, { status: 500 });
     }
 
-    // Create JWT token
-    const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: TOKEN_EXPIRY })
+    // Create a corresponding user document in Firestore
+    // Use the UID from Firebase Auth as the document ID
+    const userId = firebaseUser.uid;
+    
+    const newUser: Omit<User, "created_at" | "updated_at"> = {
+      email,
+      name,
+      avatar_url: null, // You might want to set a default avatar or handle this differently
+    };
 
-    // Set cookie
-    cookies().set({
-      name: "auth_token",
-      value: token,
-      httpOnly: true,
-      path: "/",
-      secure: process.env.NODE_ENV === "production",
-      maxAge: 60 * 60 * 24 * 7, // 7 days
-    })
+    await createUser(userId, newUser);
 
-    return NextResponse.json({ user })
+    // Return user data (excluding sensitive information like password)
+    return NextResponse.json({
+      user: {
+        id: userId,
+        email: newUser.email,
+        name: newUser.name,
+        avatar_url: newUser.avatar_url,
+      },
+    });
   } catch (error: any) {
-    console.error("Signup error:", error)
-    return NextResponse.json({ error: error.message || "An error occurred during signup" }, { status: 500 })
+    console.error("Signup error:", error);
+    // Handle specific Firebase errors if needed
+    let errorMessage = "An error occurred during signup";
+    if (error.code === "auth/email-already-in-use") {
+      errorMessage = "Email already in use";
+    } else if (error.code === "auth/invalid-email") {
+      errorMessage = "Invalid email address";
+    } else if (error.code === "auth/weak-password") {
+      errorMessage = "Weak password";
+    }
+    return NextResponse.json({ error: errorMessage }, { status: 500 });
   }
 }
 

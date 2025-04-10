@@ -1,37 +1,50 @@
-import { type NextRequest, NextResponse } from "next/server"
-import { loginUser } from "@/lib/auth"
-import { cookies } from "next/headers"
+--- a/api/auth/login/route.ts
++++ b/api/auth/login/route.ts
+
+import { type NextRequest, NextResponse } from "next/server";
+import { signIn } from "../../../lib/firebase-auth"; // Import Firebase signIn
+import { getUser } from "../../../lib/users"; // Import Firestore getUser
 
 export async function POST(request: NextRequest) {
   try {
-    const { email, password } = await request.json()
+    const { email, password } = await request.json();
 
     // Validate input
     if (!email || !password) {
-      return NextResponse.json({ error: "Email and password are required" }, { status: 400 })
+      return NextResponse.json({ error: "Email and password are required" }, { status: 400 });
     }
 
-    // Login the user
-    const result = await loginUser(email, password)
+    // Sign in with Firebase Authentication
+    const userCredential = await signIn(email, password);
+    const firebaseUser = userCredential.user;
 
-    if (!result) {
-      return NextResponse.json({ error: "Invalid credentials" }, { status: 401 })
+    if (!firebaseUser) {
+      return NextResponse.json({ error: "Invalid credentials" }, { status: 401 });
     }
 
-    // Set cookie
-    cookies().set({
-      name: "auth_token",
-      value: result.token,
-      httpOnly: true,
-      path: "/",
-      secure: process.env.NODE_ENV === "production",
-      maxAge: 60 * 60 * 24 * 7, // 7 days
-    })
+    // Get the corresponding user document from Firestore
+    const userId = firebaseUser.uid;
+    const user = await getUser(userId);
 
-    return NextResponse.json({ user: result.user })
+    if (!user) {
+      // This should ideally not happen if signup process is correct
+      return NextResponse.json({ error: "User not found in Firestore" }, { status: 404 });
+    }
+
+    // Return user data from Firestore
+    return NextResponse.json({ user: { id: userId, ...user } });
   } catch (error: any) {
-    console.error("Login error:", error)
-    return NextResponse.json({ error: error.message || "An error occurred during login" }, { status: 500 })
+    console.error("Login error:", error);
+    let errorMessage = "An error occurred during login";
+    // Handle specific Firebase errors
+    if (error.code === "auth/invalid-credential") {
+      errorMessage = "Invalid credentials";
+    } else if (error.code === "auth/user-not-found") {
+      errorMessage = "User not found";
+    } else if (error.code === "auth/wrong-password") {
+      errorMessage = "Invalid credentials"; // For security reasons, don't specify wrong password
+    }
+    return NextResponse.json({ error: errorMessage }, { status: 500 });
   }
 }
 
